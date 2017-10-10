@@ -420,7 +420,12 @@ func kern_procargs(pid int,
 			return fmt.Errorf("Error reading args: %v", err)
 		}
 		pair := bytes.SplitN(chop(line), delim, 2)
-		env(string(pair[0]), string(pair[1]))
+
+		if len(pair) >= 2 {
+			env(string(pair[0]), string(pair[1]))
+		} else {
+			return fmt.Errorf("Error reading process information for PID: %d", pid)
+		}
 	}
 
 	return nil
