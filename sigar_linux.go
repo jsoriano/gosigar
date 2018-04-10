@@ -18,7 +18,7 @@ func init() {
 }
 
 func getMountTableFileName() string {
-	return "/etc/mtab"
+	return Procd + "/self/mounts"
 }
 
 func (self *Uptime) Get() error {
