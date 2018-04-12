@@ -2,16 +2,43 @@
 
 package windows
 
-import "unsafe"
-import "syscall"
+import (
+	"syscall"
+	"unsafe"
+)
 
 var _ unsafe.Pointer
 
+// Do the interface allocations only once for common
+// Errno values.
+const (
+	errnoERROR_IO_PENDING = 997
+)
+
 var (
-	modkernel32 = syscall.NewLazyDLL("kernel32.dll")
-	modpsapi    = syscall.NewLazyDLL("psapi.dll")
-	modntdll    = syscall.NewLazyDLL("ntdll.dll")
-	modadvapi32 = syscall.NewLazyDLL("advapi32.dll")
+	errERROR_IO_PENDING error = syscall.Errno(errnoERROR_IO_PENDING)
+)
+
+// errnoErr returns common boxed Errno values, to prevent
+// allocations at runtime.
+func errnoErr(e syscall.Errno) error {
+	switch e {
+	case 0:
+		return nil
+	case errnoERROR_IO_PENDING:
+		return errERROR_IO_PENDING
+	}
+	// TODO: add more here, after collecting data on the common
+	// error values see on Windows. (perhaps when running
+	// all.bat?)
+	return e
+}
+
+var (
+	modkernel32 = NewLazySystemDLL("kernel32.dll")
+	modpsapi    = NewLazySystemDLL("psapi.dll")
+	modntdll    = NewLazySystemDLL("ntdll.dll")
+	modadvapi32 = NewLazySystemDLL("advapi32.dll")
 
 	procGlobalMemoryStatusEx      = modkernel32.NewProc("GlobalMemoryStatusEx")
 	procGetLogicalDriveStringsW   = modkernel32.NewProc("GetLogicalDriveStringsW")
@@ -19,6 +46,7 @@ var (
 	procGetProcessImageFileNameW  = modpsapi.NewProc("GetProcessImageFileNameW")
 	procGetSystemTimes            = modkernel32.NewProc("GetSystemTimes")
 	procGetDriveTypeW             = modkernel32.NewProc("GetDriveTypeW")
+	procGetVolumeInformationW     = modkernel32.NewProc("GetVolumeInformationW")
 	procEnumProcesses             = modpsapi.NewProc("EnumProcesses")
 	procGetDiskFreeSpaceExW       = modkernel32.NewProc("GetDiskFreeSpaceExW")
 	procProcess32FirstW           = modkernel32.NewProc("Process32FirstW")
@@ -35,7 +63,7 @@ func _GlobalMemoryStatusEx(buffer *MemoryStatusEx) (err error) {
 	r1, _, e1 := syscall.Syscall(procGlobalMemoryStatusEx.Addr(), 1, uintptr(unsafe.Pointer(buffer)), 0, 0)
 	if r1 == 0 {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -48,7 +76,7 @@ func _GetLogicalDriveStringsW(bufferLength uint32, buffer *uint16) (length uint3
 	length = uint32(r0)
 	if length == 0 {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -60,7 +88,7 @@ func _GetProcessMemoryInfo(handle syscall.Handle, psmemCounters *ProcessMemoryCo
 	r1, _, e1 := syscall.Syscall(procGetProcessMemoryInfo.Addr(), 3, uintptr(handle), uintptr(unsafe.Pointer(psmemCounters)), uintptr(cb))
 	if r1 == 0 {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -73,7 +101,7 @@ func _GetProcessImageFileName(handle syscall.Handle, outImageFileName *uint16, s
 	length = uint32(r0)
 	if length == 0 {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -85,7 +113,7 @@ func _GetSystemTimes(idleTime *syscall.Filetime, kernelTime *syscall.Filetime, u
 	r1, _, e1 := syscall.Syscall(procGetSystemTimes.Addr(), 3, uintptr(unsafe.Pointer(idleTime)), uintptr(unsafe.Pointer(kernelTime)), uintptr(unsafe.Pointer(userTime)))
 	if r1 == 0 {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -98,7 +126,19 @@ func _GetDriveType(rootPathName *uint16) (dt DriveType, err error) {
 	dt = DriveType(r0)
 	if dt == 0 {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
+		} else {
+			err = syscall.EINVAL
+		}
+	}
+	return
+}
+
+func _GetVolumeInformation(rootPathName *uint16, outVolumeName *uint16, volumeNameSize uint32, outVolumeSerialNumber *uint32, outMaximumComponentLength *uint32, outFileSystemFlags *uint32, outFileSystemNameBuffer *uint16, fileSystemNameBuffer uint32) (err error) {
+	r1, _, e1 := syscall.Syscall9(procGetVolumeInformationW.Addr(), 8, uintptr(unsafe.Pointer(rootPathName)), uintptr(unsafe.Pointer(outVolumeName)), uintptr(volumeNameSize), uintptr(unsafe.Pointer(outVolumeSerialNumber)), uintptr(unsafe.Pointer(outMaximumComponentLength)), uintptr(unsafe.Pointer(outFileSystemFlags)), uintptr(unsafe.Pointer(outFileSystemNameBuffer)), uintptr(fileSystemNameBuffer), 0)
+	if r1 == 0 {
+		if e1 != 0 {
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -110,7 +150,7 @@ func _EnumProcesses(processIds *uint32, sizeBytes uint32, bytesReturned *uint32)
 	r1, _, e1 := syscall.Syscall(procEnumProcesses.Addr(), 3, uintptr(unsafe.Pointer(processIds)), uintptr(sizeBytes), uintptr(unsafe.Pointer(bytesReturned)))
 	if r1 == 0 {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -122,7 +162,7 @@ func _GetDiskFreeSpaceEx(directoryName *uint16, freeBytesAvailable *uint64, tota
 	r1, _, e1 := syscall.Syscall6(procGetDiskFreeSpaceExW.Addr(), 4, uintptr(unsafe.Pointer(directoryName)), uintptr(unsafe.Pointer(freeBytesAvailable)), uintptr(unsafe.Pointer(totalNumberOfBytes)), uintptr(unsafe.Pointer(totalNumberOfFreeBytes)), 0, 0)
 	if r1 == 0 {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -134,7 +174,7 @@ func _Process32First(handle syscall.Handle, processEntry32 *ProcessEntry32) (err
 	r1, _, e1 := syscall.Syscall(procProcess32FirstW.Addr(), 2, uintptr(handle), uintptr(unsafe.Pointer(processEntry32)), 0)
 	if r1 == 0 {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -146,7 +186,7 @@ func _Process32Next(handle syscall.Handle, processEntry32 *ProcessEntry32) (err 
 	r1, _, e1 := syscall.Syscall(procProcess32NextW.Addr(), 2, uintptr(handle), uintptr(unsafe.Pointer(processEntry32)), 0)
 	if r1 == 0 {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -159,7 +199,7 @@ func _CreateToolhelp32Snapshot(flags uint32, processID uint32) (handle syscall.H
 	handle = syscall.Handle(r0)
 	if handle == 0 {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -172,7 +212,7 @@ func _NtQuerySystemInformation(systemInformationClass uint32, systemInformation 
 	ntstatus = uint32(r0)
 	if ntstatus == 0 {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -185,7 +225,7 @@ func _NtQueryInformationProcess(processHandle syscall.Handle, processInformation
 	ntstatus = uint32(r0)
 	if ntstatus == 0 {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -206,7 +246,7 @@ func __LookupPrivilegeName(systemName *uint16, luid *int64, buffer *uint16, size
 	r1, _, e1 := syscall.Syscall6(procLookupPrivilegeNameW.Addr(), 4, uintptr(unsafe.Pointer(systemName)), uintptr(unsafe.Pointer(luid)), uintptr(unsafe.Pointer(buffer)), uintptr(unsafe.Pointer(size)), 0, 0)
 	if r1 == 0 {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -232,7 +272,7 @@ func __LookupPrivilegeValue(systemName *uint16, name *uint16, luid *int64) (err 
 	r1, _, e1 := syscall.Syscall(procLookupPrivilegeValueW.Addr(), 3, uintptr(unsafe.Pointer(systemName)), uintptr(unsafe.Pointer(name)), uintptr(unsafe.Pointer(luid)))
 	if r1 == 0 {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -251,7 +291,7 @@ func _AdjustTokenPrivileges(token syscall.Token, releaseAll bool, input *byte, o
 	success = r0 != 0
 	if true {
 		if e1 != 0 {
-			err = error(e1)
+			err = errnoErr(e1)
 		} else {
 			err = syscall.EINVAL
 		}

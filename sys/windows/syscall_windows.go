@@ -133,6 +133,16 @@ type ProcessMemoryCountersEx struct {
 	PrivateUsage               uintptr
 }
 
+// VolumeInformation contains the output values of a call to
+// GetVolumeInformation
+type VolumeInformation struct {
+	Name                   string
+	SerialNumber           uint32
+	MaximumComponentLength uint32
+	FileSystemFlags        uint32
+	FileSystemName         string
+}
+
 // GetLogicalDriveStrings returns a list of drives in the system.
 // https://msdn.microsoft.com/en-us/library/windows/desktop/aa364975(v=vs.85).aspx
 func GetLogicalDriveStrings() ([]string, error) {
@@ -255,6 +265,38 @@ func GetDriveType(rootPathName string) (DriveType, error) {
 	return dt, nil
 }
 
+// GetVolumeInformation Retrieves information about the file system and volume
+// associated with the specified root directory.
+// https://msdn.microsoft.com/en-us/library/windows/desktop/aa364993
+func GetVolumeInformation(rootPathName string) (*VolumeInformation, error) {
+	rootPathNamePtr, err := syscall.UTF16PtrFromString(rootPathName)
+	if err != nil {
+		return nil, errors.Wrapf(err, "UTF16PtrFromString failed for rootPathName=%v", rootPathName)
+	}
+
+	volumeNameBuf := make([]uint16, MAX_PATH)
+	fileSystemNameBuf := make([]uint16, 64)
+	var volumeSerialNumber, maximumComponentLength, fileSystemFlags uint32
+	err = _GetVolumeInformation(rootPathNamePtr,
+		&volumeNameBuf[0], uint32(len(volumeNameBuf)),
+		&volumeSerialNumber,
+		&maximumComponentLength,
+		&fileSystemFlags,
+		&fileSystemNameBuf[0], uint32(len(fileSystemNameBuf)))
+
+	if err != nil {
+		return nil, errors.Wrapf(err, "GetVolumeInformation failed for rootPathName=%v", rootPathName)
+	}
+
+	return &VolumeInformation{
+		Name:                   syscall.UTF16ToString(volumeNameBuf),
+		SerialNumber:           volumeSerialNumber,
+		MaximumComponentLength: maximumComponentLength,
+		FileSystemFlags:        fileSystemFlags,
+		FileSystemName:         syscall.UTF16ToString(fileSystemNameBuf),
+	}, nil
+}
+
 // EnumProcesses retrieves the process identifier for each process object in the
 // system. This function can return a max of 65536 PIDs. If there are more
 // processes than that then this will not return them all.
@@ -373,6 +415,7 @@ func Process32Next(handle syscall.Handle) (ProcessEntry32, error) {
 //sys   _GetProcessImageFileName(handle syscall.Handle, outImageFileName *uint16, size uint32) (length uint32, err error) = psapi.GetProcessImageFileNameW
 //sys   _GetSystemTimes(idleTime *syscall.Filetime, kernelTime *syscall.Filetime, userTime *syscall.Filetime) (err error) = kernel32.GetSystemTimes
 //sys   _GetDriveType(rootPathName *uint16) (dt DriveType, err error) = kernel32.GetDriveTypeW
+//sys   _GetVolumeInformation(rootPathName *uint16, outVolumeName *uint16, volumeNameSize uint32, outVolumeSerialNumber *uint32, outMaximumComponentLength *uint32, outFileSystemFlags *uint32, outFileSystemNameBuffer *uint16, fileSystemNameBuffer uint32) (err error) = kernel32.GetVolumeInformationW
 //sys   _EnumProcesses(processIds *uint32, sizeBytes uint32, bytesReturned *uint32) (err error) = psapi.EnumProcesses
 //sys   _GetDiskFreeSpaceEx(directoryName *uint16, freeBytesAvailable *uint64, totalNumberOfBytes *uint64, totalNumberOfFreeBytes *uint64) (err error) = kernel32.GetDiskFreeSpaceExW
 //sys   _Process32First(handle syscall.Handle, processEntry32 *ProcessEntry32) (err error) = kernel32.Process32FirstW

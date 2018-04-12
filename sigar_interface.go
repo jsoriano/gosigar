@@ -103,12 +103,29 @@ type FDUsage struct {
 }
 
 type FileSystem struct {
-	DirName     string
-	DevName     string
-	TypeName    string
+	// Path where the filesystem is mounted
+	DirName string
+
+	// Device name
+	DevName string
+
+	// Internal device identifier
+	DevID string
+
+	// Root of the mount within the filesystem
+	Root string
+
+	// Disk drive type (removable, fixed, cd-rom, ram...)
+	TypeName string
+
+	// Filesystem type
 	SysTypeName string
-	Options     string
-	Flags       uint32
+
+	// Filesystem options
+	Options string
+
+	// Filesystem Flags
+	Flags uint32
 }
 
 type FileSystemList struct {
