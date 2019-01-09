@@ -32,6 +32,17 @@ type Win32_OperatingSystem struct {
 	LastBootUpTime time.Time
 }
 
+// Win32_Volume WMI class represents a volume on the Windows operating system.
+// https://msdn.microsoft.com/en-us/library/aa394515(v=vs.85).aspx
+type Win32_Volume struct {
+	Name        *string
+	DeviceID    *string
+	DriveLetter *string
+	DriveType   uint32
+	FileSystem  *string
+	Label       *string
+}
+
 var (
 	// version is Windows version of the host OS.
 	version = windows.GetWindowsVersion()
@@ -154,7 +165,7 @@ func (self *CpuList) Get() error {
 	return nil
 }
 
-func (self *FileSystemList) Get() error {
+func (self *FileSystemList) getLogicalDrives() error {
 	drives, err := windows.GetLogicalDriveStrings()
 	if err != nil {
 		return errors.Wrap(err, "GetLogicalDriveStrings failed")
@@ -170,6 +181,49 @@ func (self *FileSystemList) Get() error {
 			DirName:  drive,
 			DevName:  drive,
 			TypeName: dt.String(),
+		})
+	}
+	return nil
+}
+
+func (self *FileSystemList) Get() error {
+	if !version.IsWindowsVistaOrGreater() {
+		return self.getLogicalDrives()
+	}
+
+	var volumes []Win32_Volume
+
+	// If volume has no capacity, it is not ready, it can be an optical drive without a disk
+	// If its name starts with '\\', it is using its device ID and is not mounted
+	query := wmi.CreateQuery(&volumes, "WHERE Capacity > 0 AND NOT Name LIKE '\\\\%'")
+	if err := wmi.Query(query, &volumes); err != nil {
+		return errors.Wrap(err, "wmi query for Win32_Volume failed")
+	}
+
+	for _, v := range volumes {
+		sysType := ""
+		if v.FileSystem != nil {
+			sysType = *v.FileSystem
+		}
+
+		// If volume has an assigned letter, mimic previous behaviour
+		// for consistency and use the volume name also as device name.
+		// If not, use the device ID.
+		// Volumes without letter were not collected by previous method
+		// based on `GetLogicalDriveStrings`.
+		devName := *v.DeviceID
+		if v.DriveLetter != nil && *v.DriveLetter != "" {
+			devName = *v.Name
+		}
+
+		self.List = append(self.List, FileSystem{
+			// A volume can have multiple "access paths", in that case it is listed
+			// only once, and its `Name` is the shortest path, or the letter if it
+			// has one assigned.
+			DirName:     *v.Name,
+			DevName:     devName,
+			SysTypeName: sysType,
+			TypeName:    windows.DriveType(v.DriveType).String(),
 		})
 	}
 	return nil
